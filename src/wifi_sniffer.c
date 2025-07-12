@@ -13,14 +13,7 @@ const wifi_country_t wifi_country_config = {
     .policy = WIFI_COUNTRY_POLICY_AUTO
 };
 
-const char* frame_types[] = {
-  "MANAGEMENT",
-  "CONTROL",
-  "DATA",
-  "MISC"
-};
-
-void wifi_sniffer_frame_callback(void* buf, wifi_promiscuous_pkt_type_t type) {
+void wifi_sniffer_frame_callback(void* buf) {
     const wifi_promiscuous_pkt_t *ppkt = (wifi_promiscuous_pkt_t *)buf;
     const uint8_t* payload = ppkt->payload;
     uint16_t fc = payload[0] | (payload[1] << 8);
