@@ -1,0 +1,10 @@
+{
+    "idf.port": "/dev/ttyUSB1",
+    "files.associations": {
+        "nvs_flash.h": "c",
+        "esp_mac.h": "c",
+        "base64.h": "c",
+        "string": "cpp",
+        "format": "cpp"
+    }
+}

@@ -1,0 +1,13 @@
+# Target labels
+ bootloader
+# Source files and their labels
+/home/kamaii/Documents/PlatformIO/Projects/hammer/build/CMakeFiles/bootloader
+/home/kamaii/Documents/PlatformIO/Projects/hammer/build/CMakeFiles/bootloader.rule
+/home/kamaii/Documents/PlatformIO/Projects/hammer/build/CMakeFiles/bootloader-complete.rule
+/home/kamaii/Documents/PlatformIO/Projects/hammer/build/bootloader-prefix/src/bootloader-stamp/bootloader-build.rule
+/home/kamaii/Documents/PlatformIO/Projects/hammer/build/bootloader-prefix/src/bootloader-stamp/bootloader-configure.rule
+/home/kamaii/Documents/PlatformIO/Projects/hammer/build/bootloader-prefix/src/bootloader-stamp/bootloader-download.rule
+/home/kamaii/Documents/PlatformIO/Projects/hammer/build/bootloader-prefix/src/bootloader-stamp/bootloader-install.rule
+/home/kamaii/Documents/PlatformIO/Projects/hammer/build/bootloader-prefix/src/bootloader-stamp/bootloader-mkdir.rule
+/home/kamaii/Documents/PlatformIO/Projects/hammer/build/bootloader-prefix/src/bootloader-stamp/bootloader-patch.rule
+/home/kamaii/Documents/PlatformIO/Projects/hammer/build/bootloader-prefix/src/bootloader-stamp/bootloader-update.rule
