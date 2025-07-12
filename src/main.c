@@ -3,8 +3,15 @@
 
 const int CHANNEL = 11;
 
-wifi_promiscuous_filter_t filter = {
+wifi_promiscuous_filter_t wifi_sniffer_filter_config = {
     .filter_mask = WIFI_PROMIS_FILTER_MASK_ALL,
+};
+
+const wifi_country_t wifi_country_config = {
+    .cc = "US",
+    .schan = 1,
+    .nchan = 11,
+    .policy = WIFI_COUNTRY_POLICY_AUTO
 };
 
 const char* frame_types[] = {
@@ -66,15 +73,18 @@ void frame_callback(void* buf, wifi_promiscuous_pkt_type_t type) {
 void app_main(void) {
   nvs_flash_init();
   esp_event_loop_create_default();
-  wifi_init_config_t config = WIFI_INIT_CONFIG_DEFAULT();
-  esp_wifi_init(&config);
+  wifi_init_config_t default_wifi_client_config = WIFI_INIT_CONFIG_DEFAULT();
+  esp_wifi_init(&default_wifi_client_config);
+  esp_wifi_set_country(&wifi_country_config);
   esp_wifi_set_mode(WIFI_MODE_NULL);
-  esp_wifi_set_channel(CHANNEL, 1);
   esp_wifi_set_promiscuous(true);
-  esp_wifi_set_promiscuous_filter(&filter);
+  esp_wifi_set_promiscuous_filter(&wifi_sniffer_filter_config);
   esp_wifi_set_promiscuous_rx_cb(frame_callback);
   esp_wifi_start();
+  vTaskDelay(1000 / portTICK_PERIOD_MS);
+  esp_wifi_set_channel(CHANNEL, WIFI_SECOND_CHAN_NONE);
   for(;;) {
     vTaskDelay(1000 / portTICK_PERIOD_MS);
   }
 }
+
