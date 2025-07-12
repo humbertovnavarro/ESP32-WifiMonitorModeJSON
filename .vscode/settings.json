@@ -5,6 +5,8 @@
         "esp_mac.h": "c",
         "base64.h": "c",
         "string": "cpp",
-        "format": "cpp"
+        "format": "cpp",
+        "esp_wifi.h": "c",
+        "wifi_sniffer.h": "c"
     }
 }
