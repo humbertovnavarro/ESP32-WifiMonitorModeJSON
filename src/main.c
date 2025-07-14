@@ -6,6 +6,7 @@ void app_main(void) {
   nvs_flash_init();
   esp_event_loop_create_default();
   uint8_t channels[] = {1, 6, 11};
+  wifi_sniffer_start();
   for(int i = 0; i < 3; i++) {
     esp_wifi_set_channel(channels[i], 0);
     if(i == 2) {
