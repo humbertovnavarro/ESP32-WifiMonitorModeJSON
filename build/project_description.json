@@ -1,7 +1,7 @@
 {
     "version":            "1.2",
     "project_name":       "hammer",
-    "project_version":    "1",
+    "project_version":    "f6038fe-dirty",
     "project_path":       "/home/kamaii/Documents/PlatformIO/Projects/hammer",
     "idf_path":           "/home/kamaii/esp/v5.5/esp-idf",
     "build_dir":          "/home/kamaii/Documents/PlatformIO/Projects/hammer/build",
