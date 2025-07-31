@@ -82,10 +82,11 @@ void setup() {
       .data_bits = UART_DATA_8_BITS,
       .parity = UART_PARITY_DISABLE,
       .stop_bits = UART_STOP_BITS_1,
-      .flow_ctrl = UART_HW_FLOWCTRL_CTS_RTS,
-      .rx_flow_ctrl_thresh = 122,
+      .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
   };
-  ESP_ERROR_CHECK(uart_set_pin(UART_NUM_0, 39, 37, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+  #ifndef HELTEC_V3
+    ESP_ERROR_CHECK(uart_set_pin(UART_NUM_0, 39, 37, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+  #endif
   wifi_init_config_t default_wifi_client_config = WIFI_INIT_CONFIG_DEFAULT();
   ESP_ERROR_CHECK(esp_wifi_init(&default_wifi_client_config));
   ESP_ERROR_CHECK(esp_wifi_set_country(&wifi_country_config));
