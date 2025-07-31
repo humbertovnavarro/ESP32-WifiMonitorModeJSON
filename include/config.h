@@ -1,4 +1,4 @@
-#ifndef HELTEC_V3
+#ifndef HAS_UART_BRIDGE
     #define UART_TX 39
     #define UART_RX 37
 #else
@@ -8,12 +8,6 @@
 #define JSON_BUF_SIZE 2048
 #define UART_BUF_SIZE 1024 * 8
 #define MAX_DEBOUNCE_ENTRIES 32
-#ifdef PSRAM
-#define PACKET_BUFFER_LENGTH 512
-#else
-#define PACKET_BUFFER_LENGTH 32
-#endif
-#define BEACON_DEBOUNCE_MS 1000
 #define HOP_DELAY 250
 #define NUM_CHANNELS 3
 #define BAUD 115200
