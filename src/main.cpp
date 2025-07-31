@@ -4,32 +4,18 @@
 #include "driver/uart.h"
 #include "esp_err.h"
 #include "esp_timer.h"
-#define HOP_DELAY 200
+#include "base64.hpp"
+#define JSON_BUF_SIZE 2048
+const int uart_buffer_size = (1024 * 16);
+#define BAUD 115200
+#define HOP_DELAY 250
 
-bool pcap_header_sent = false;
-const int uart_buffer_size = (1024 * 2);
 QueueHandle_t uart_queue;
 
-struct pcap_hdr {
-    uint32_t magic_number;   // 0xa1b2c3d4
-    uint16_t version_major;  // 2
-    uint16_t version_minor;  // 4
-    int32_t  thiszone;       // GMT to local correction
-    uint32_t sigfigs;        // accuracy of timestamps
-    uint32_t snaplen;        // max length of captured packets
-    uint32_t network;        // data link type (DLT_IEEE802_11 = 105)
-};
-
-struct pcaprec_hdr {
-    uint32_t ts_sec;         // timestamp seconds
-    uint32_t ts_usec;        // timestamp microseconds
-    uint32_t incl_len;       // number of bytes of packet saved
-    uint32_t orig_len;       // actual length of packet
-};
-
 wifi_promiscuous_filter_t wifi_sniffer_filter_config = {
-    .filter_mask = WIFI_PROMIS_FILTER_MASK_ALL,
+    .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT,
 };
+
 const wifi_country_t wifi_country_config = {
     .cc = "US",
     .schan = 1,
@@ -37,48 +23,113 @@ const wifi_country_t wifi_country_config = {
     .policy = WIFI_COUNTRY_POLICY_AUTO
 };
 
-uint8_t channels[] = {1, 6, 11};
+void to_hex_str(const uint8_t* data, size_t len, char* out, size_t out_size) {
+    const char* hex = "0123456789ABCDEF";
+    size_t i, j = 0;
+    for (i = 0; i < len && j + 2 < out_size; ++i) {
+        out[j++] = hex[data[i] >> 4];
+        out[j++] = hex[data[i] & 0x0F];
+    }
+    out[j] = '\0';
+}
+
+void mac_to_str(const uint8_t* mac, char* out) {
+    snprintf(out, 18, "%02X:%02X:%02X:%02X:%02X:%02X",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
+}
 
 void sniffer_frame_cb(void* buf, wifi_promiscuous_pkt_type_t type) {
-    wifi_promiscuous_pkt_t* packet = (wifi_promiscuous_pkt_t*)buf;
-    if (!pcap_header_sent) {
-      pcap_hdr header = {
-          .magic_number = 0xa1b2c3d4,
-          .version_major = 2,
-          .version_minor = 4,
-          .thiszone = 0,
-          .sigfigs = 0,
-          .snaplen = 65535,
-          .network = 105  // DLT_IEEE802_11
-      };
-      uart_write_bytes(UART_NUM_0, (const char*)&header, sizeof(header));
-      pcap_header_sent = true;
-    }
     wifi_promiscuous_pkt_t* pkt = (wifi_promiscuous_pkt_t*)buf;
-    // Timestamp
+    const uint8_t* payload = pkt->payload;
+    const char* subtype_str = "UNKNOWN";
+    
+    uint8_t subtype = (payload[0] & 0xF0) >> 4;
+
+    switch (subtype) {
+        case 0: subtype_str = "AssocReq"; break;
+        case 1: subtype_str = "AssocResp"; return;
+        case 2: subtype_str = "ReassocReq"; break;
+        case 3: subtype_str = "ReassocResp"; return;
+        case 4: subtype_str = "ProbeReq"; break;
+        case 5: subtype_str = "ProbeResp"; return;
+        case 8: subtype_str = "Beacon"; break;
+        case 9: subtype_str = "ATIM"; return;
+        case 10: subtype_str = "Disassoc"; break;
+        case 11: subtype_str = "Auth"; break;
+        case 12: subtype_str = "Deauth"; break;
+        case 13: subtype_str = "Action"; return;
+    }
+
+    int len = pkt->rx_ctrl.sig_len;
     int64_t time_us = esp_timer_get_time();
     uint32_t ts_sec = time_us / 1000000;
     uint32_t ts_usec = time_us % 1000000;
-    // Captured data
-    uint32_t length = pkt->rx_ctrl.sig_len;
-    uint32_t capped_len = (length > 65535) ? 65535 : length;
-    struct pcaprec_hdr pkt_hdr = {
-        .ts_sec = ts_sec,
-        .ts_usec = ts_usec,
-        .incl_len = capped_len,
-        .orig_len = capped_len
-    };
-    // Send packet header
-    uart_write_bytes(UART_NUM_0, (const char*)&pkt_hdr, sizeof(pkt_hdr));
-    // Send actual packet data
-    uart_write_bytes(UART_NUM_0, (const char*)pkt->payload, capped_len);
+    int rssi = pkt->rx_ctrl.rssi;
+    int channel = pkt->rx_ctrl.channel;
+
+    // Extract source MAC address
+    char mac_str[18] = {0};
+    if (len >= 16) {
+        mac_to_str(payload + 10, mac_str);  // Address 2 (source)
+    }
+
+    // Parse SSID
+    const char* ssid = "";
+    char ssid_buf[33] = {0};
+    if ((payload[0] & 0xF0) == 0x80 || (payload[0] & 0xF0) == 0x40) {
+        int tag_offset = 36;
+        while (tag_offset + 2 < len) {
+            uint8_t tag_id = payload[tag_offset];
+            uint8_t tag_len = payload[tag_offset + 1];
+            if (tag_id == 0x00 && tag_offset + 2 + tag_len <= len) {
+                int copy_len = tag_len > 32 ? 32 : tag_len;
+                memcpy(ssid_buf, &payload[tag_offset + 2], copy_len);
+                ssid_buf[copy_len] = '\0';
+                ssid = ssid_buf;
+                break;
+            }
+            tag_offset += 2 + tag_len;
+        }
+    }
+
+    size_t encoded_len = encode_base64_length(len);
+    unsigned char payload_b64[encoded_len + 1];
+    encode_base64(payload, len, payload_b64);
+
+    // Create JSON
+    char json[JSON_BUF_SIZE];
+    int json_len = snprintf(json, sizeof(json),
+        "{"
+        "\"ts_sec\":%lu,"
+        "\"ts_usec\":%lu,"
+        "\"rssi\":%d,"
+        "\"channel\":%d,"
+        "\"len\":%d,"
+        "\"mac\":\"%s\","
+        "\"ssid\":\"%s\","
+        "\"subtype\":\"%s\","
+        "\"payload\":\"%s\""
+        "}\n",
+        (unsigned long)ts_sec,
+        (unsigned long)ts_usec,
+        rssi,
+        channel,
+        len,
+        mac_str,
+        ssid,
+        subtype_str,
+        payload_b64
+    );
+    if (json_len > 0 && json_len < sizeof(json)) {
+        uart_write_bytes(UART_NUM_0, json, json_len);
+    }
 }
 
 void setup() {
   ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, uart_buffer_size, uart_buffer_size, 10, &uart_queue, 0));
   const uart_port_t uart_num = UART_NUM_0;
   uart_config_t uart_config = {
-      .baud_rate = 115200,
+      .baud_rate = BAUD,
       .data_bits = UART_DATA_8_BITS,
       .parity = UART_PARITY_DISABLE,
       .stop_bits = UART_STOP_BITS_1,
@@ -100,12 +151,18 @@ void setup() {
   ESP_ERROR_CHECK(esp_event_loop_create_default());
 }
 
+#define NUM_CHANNELS 3
+int channels[] = {1, 6, 11};
+#define HOP_DELAY 250
+
+static int current_channel_index = 0;
+static int last_channel = -1;
+
 void loop(void) {
-  for(int i = 0; i < 3; i++) {
-    esp_wifi_set_channel(channels[i], WIFI_SECOND_CHAN_NONE);
-    if(i == 2) {
-      i = 0;
+    while (1) {
+        int channel = channels[current_channel_index];
+        esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+        current_channel_index = (current_channel_index + 1) % NUM_CHANNELS;
+        vTaskDelay(HOP_DELAY / portTICK_PERIOD_MS);
     }
-    vTaskDelay(HOP_DELAY / portTICK_PERIOD_MS);
-  }
 }
