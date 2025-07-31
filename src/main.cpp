@@ -9,6 +9,50 @@
 const int uart_buffer_size = (1024 * 16);
 #define BAUD 115200
 #define HOP_DELAY 250
+#include "esp_timer.h"
+#include <string.h>
+
+#define BEACON_DEBOUNCE_MS 1000
+#define MAX_DEBOUNCE_ENTRIES 32
+
+typedef struct {
+    uint8_t mac[6];
+    int64_t last_seen_ms;
+} beacon_entry_t;
+
+static beacon_entry_t beacon_debounce_table[MAX_DEBOUNCE_ENTRIES] = {0};
+
+static bool check_beacon_debounce(const uint8_t* mac) {
+    int64_t now_ms = esp_timer_get_time() / 1000;
+    for (int i = 0; i < MAX_DEBOUNCE_ENTRIES; i++) {
+        if (memcmp(beacon_debounce_table[i].mac, mac, 6) == 0) {
+            if (now_ms - beacon_debounce_table[i].last_seen_ms < BEACON_DEBOUNCE_MS) {
+                return true; // debounce active: ignore
+            } else {
+                beacon_debounce_table[i].last_seen_ms = now_ms; // update timestamp
+                return false; // process
+            }
+        }
+    }
+    // Not found: insert into first empty slot or overwrite oldest
+    int oldest_index = 0;
+    int64_t oldest_time = now_ms;
+    for (int i = 0; i < MAX_DEBOUNCE_ENTRIES; i++) {
+        if (beacon_debounce_table[i].last_seen_ms == 0) {
+            memcpy(beacon_debounce_table[i].mac, mac, 6);
+            beacon_debounce_table[i].last_seen_ms = now_ms;
+            return false; // process
+        }
+        if (beacon_debounce_table[i].last_seen_ms < oldest_time) {
+            oldest_time = beacon_debounce_table[i].last_seen_ms;
+            oldest_index = i;
+        }
+    }
+    // Overwrite oldest
+    memcpy(beacon_debounce_table[oldest_index].mac, mac, 6);
+    beacon_debounce_table[oldest_index].last_seen_ms = now_ms;
+    return false; // process
+}
 
 QueueHandle_t uart_queue;
 
@@ -52,7 +96,12 @@ void sniffer_frame_cb(void* buf, wifi_promiscuous_pkt_type_t type) {
         case 3: subtype_str = "ReassocResp"; return;
         case 4: subtype_str = "ProbeReq"; break;
         case 5: subtype_str = "ProbeResp"; return;
-        case 8: subtype_str = "Beacon"; break;
+        case 8: 
+            if (check_beacon_debounce(payload + 10)) {
+                return;
+            }
+            subtype_str = "Beacon";
+            break;
         case 9: subtype_str = "ATIM"; return;
         case 10: subtype_str = "Disassoc"; break;
         case 11: subtype_str = "Auth"; break;
@@ -91,11 +140,16 @@ void sniffer_frame_cb(void* buf, wifi_promiscuous_pkt_type_t type) {
             tag_offset += 2 + tag_len;
         }
     }
-
-    size_t encoded_len = encode_base64_length(len);
-    unsigned char payload_b64[encoded_len + 1];
-    encode_base64(payload, len, payload_b64);
-
+    size_t encoded_len;
+    if(subtype == 8) {
+        encoded_len = 4;
+    } else {
+        encoded_len = encode_base64_length(len);
+    }
+    unsigned char payload_b64[encoded_len + 1] = "null";
+    if(subtype != 8) {
+        encode_base64(payload, len, payload_b64);
+    }
     // Create JSON
     char json[JSON_BUF_SIZE];
     int json_len = snprintf(json, sizeof(json),
