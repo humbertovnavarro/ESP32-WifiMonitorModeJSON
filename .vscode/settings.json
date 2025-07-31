@@ -1,28 +1,6 @@
 {
-    "idf.port": "/dev/ttyS0",
     "files.associations": {
-        "nvs_flash.h": "c",
-        "esp_mac.h": "c",
-        "base64.h": "c",
-        "string": "cpp",
-        "format": "cpp",
-        "esp_wifi.h": "c",
-        "wifi_sniffer.h": "c",
-        "array": "c",
-        "charconv": "c",
-        "compare": "c",
-        "functional": "c",
-        "tuple": "c",
-        "type_traits": "c",
-        "utility": "c",
-        "variant": "c",
-        "deque": "cpp",
-        "unordered_map": "cpp",
-        "unordered_set": "cpp",
-        "vector": "cpp",
-        "string_view": "cpp",
-        "memory": "cpp",
-        "random": "cpp",
-        "initializer_list": "cpp"
+        "task.h": "c",
+        "freertos.h": "c"
     }
 }

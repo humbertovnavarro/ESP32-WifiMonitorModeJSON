@@ -1,0 +1,24 @@
+#ifndef HELTEC_V3
+    #define UART_TX 39
+    #define UART_RX 37
+#else
+    #define UART_TX UART_PIN_NO_CHANGE
+    #define UART_RX UART_PIN_NO_CHANGE
+#endif
+#define JSON_BUF_SIZE 2048
+#define UART_BUF_SIZE 1024 * 8
+#define MAX_DEBOUNCE_ENTRIES 32
+#ifdef PSRAM
+#define PACKET_BUFFER_LENGTH 512
+#else
+#define PACKET_BUFFER_LENGTH 32
+#endif
+#define BEACON_DEBOUNCE_MS 1000
+#define HOP_DELAY 250
+#define NUM_CHANNELS 3
+#define BAUD 115200
+#define HOP_DELAY 250
+#define HOP_CHANNELS {1,6,11}
+#define COUNTRY "US"
+#define LOWER_CHANNEL_BOUND 1
+#define UPPER_CHANNEL_BOUND 11

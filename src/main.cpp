@@ -1,128 +1,59 @@
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
 #include "esp_wifi.h"
-#include "nvs_flash.h"
-#include "esp_http_client.h"
+#include "config.h"
 #include "driver/uart.h"
-#include "esp_err.h"
-#include "esp_timer.h"
+#include "packet_utils.h"
+#include "Arduino.h"
+#include "ArduinoJson.h"
 #include "base64.hpp"
-#define JSON_BUF_SIZE 2048
-const int uart_buffer_size = (1024 * 16);
-#define BAUD 115200
-#define HOP_DELAY 250
-#include "esp_timer.h"
-#include <string.h>
 
-#define BEACON_DEBOUNCE_MS 1000
-#define MAX_DEBOUNCE_ENTRIES 32
-
-typedef struct {
-    uint8_t mac[6];
-    int64_t last_seen_ms;
-} beacon_entry_t;
-
-static beacon_entry_t beacon_debounce_table[MAX_DEBOUNCE_ENTRIES] = {0};
-
-static bool check_beacon_debounce(const uint8_t* mac) {
-    int64_t now_ms = esp_timer_get_time() / 1000;
-    for (int i = 0; i < MAX_DEBOUNCE_ENTRIES; i++) {
-        if (memcmp(beacon_debounce_table[i].mac, mac, 6) == 0) {
-            if (now_ms - beacon_debounce_table[i].last_seen_ms < BEACON_DEBOUNCE_MS) {
-                return true; // debounce active: ignore
-            } else {
-                beacon_debounce_table[i].last_seen_ms = now_ms; // update timestamp
-                return false; // process
-            }
-        }
-    }
-    // Not found: insert into first empty slot or overwrite oldest
-    int oldest_index = 0;
-    int64_t oldest_time = now_ms;
-    for (int i = 0; i < MAX_DEBOUNCE_ENTRIES; i++) {
-        if (beacon_debounce_table[i].last_seen_ms == 0) {
-            memcpy(beacon_debounce_table[i].mac, mac, 6);
-            beacon_debounce_table[i].last_seen_ms = now_ms;
-            return false; // process
-        }
-        if (beacon_debounce_table[i].last_seen_ms < oldest_time) {
-            oldest_time = beacon_debounce_table[i].last_seen_ms;
-            oldest_index = i;
-        }
-    }
-    // Overwrite oldest
-    memcpy(beacon_debounce_table[oldest_index].mac, mac, 6);
-    beacon_debounce_table[oldest_index].last_seen_ms = now_ms;
-    return false; // process
-}
+const int uart_buffer_size = UART_BUF_SIZE;
 
 QueueHandle_t uart_queue;
+TaskHandle_t hop_task_handle;
 
 wifi_promiscuous_filter_t wifi_sniffer_filter_config = {
     .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT,
 };
 
 const wifi_country_t wifi_country_config = {
-    .cc = "US",
-    .schan = 1,
-    .nchan = 11,
+    .cc = COUNTRY,
+    .schan = LOWER_CHANNEL_BOUND,
+    .nchan = UPPER_CHANNEL_BOUND,
     .policy = WIFI_COUNTRY_POLICY_AUTO
 };
 
-void to_hex_str(const uint8_t* data, size_t len, char* out, size_t out_size) {
-    const char* hex = "0123456789ABCDEF";
-    size_t i, j = 0;
-    for (i = 0; i < len && j + 2 < out_size; ++i) {
-        out[j++] = hex[data[i] >> 4];
-        out[j++] = hex[data[i] & 0x0F];
-    }
-    out[j] = '\0';
-}
-
-void mac_to_str(const uint8_t* mac, char* out) {
-    snprintf(out, 18, "%02X:%02X:%02X:%02X:%02X:%02X",
-             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
-}
 
 void sniffer_frame_cb(void* buf, wifi_promiscuous_pkt_type_t type) {
     wifi_promiscuous_pkt_t* pkt = (wifi_promiscuous_pkt_t*)buf;
-    const uint8_t* payload = pkt->payload;
-    const char* subtype_str = "UNKNOWN";
-    
-    uint8_t subtype = (payload[0] & 0xF0) >> 4;
+    uint8_t* payload = pkt->payload;
+    int len = pkt->rx_ctrl.sig_len;
 
-    switch (subtype) {
-        case 0: subtype_str = "AssocReq"; break;
-        case 1: subtype_str = "AssocResp"; return;
-        case 2: subtype_str = "ReassocReq"; break;
-        case 3: subtype_str = "ReassocResp"; return;
-        case 4: subtype_str = "ProbeReq"; break;
-        case 5: subtype_str = "ProbeResp"; return;
-        case 8: 
-            if (check_beacon_debounce(payload + 10)) {
-                return;
-            }
-            subtype_str = "Beacon";
-            break;
-        case 9: subtype_str = "ATIM"; return;
-        case 10: subtype_str = "Disassoc"; break;
-        case 11: subtype_str = "Auth"; break;
-        case 12: subtype_str = "Deauth"; break;
-        case 13: subtype_str = "Action"; return;
+    if (mgmt_frame_should_packet_filter(payload)) {
+        return;
     }
 
-    int len = pkt->rx_ctrl.sig_len;
+    // Timestamps
     int64_t time_us = esp_timer_get_time();
     uint32_t ts_sec = time_us / 1000000;
     uint32_t ts_usec = time_us % 1000000;
+
+    // Signal info
     int rssi = pkt->rx_ctrl.rssi;
     int channel = pkt->rx_ctrl.channel;
+    uint8_t subtype = (payload[0] & 0xF0) >> 4;
 
-    // Extract source MAC address
-    char mac_str[18] = {0};
-    if (len >= 16) {
-        mac_to_str(payload + 10, mac_str);  // Address 2 (source)
+    // MAC addresses
+// MAC addresses
+    char mac1[18] = "", mac2[18] = "", mac3[18] = "";
+    if (len >= 24) {
+        mac_to_str(payload + 4,  mac1);  // Address 1
+        mac_to_str(payload + 10, mac2);  // Address 2 (typically source MAC)
+        mac_to_str(payload + 16, mac3);  // Address 3 (typically BSSID)
     }
 
-    // Parse SSID
+    // Parse SSID (only for beacon/probe request)
     const char* ssid = "";
     char ssid_buf[33] = {0};
     if ((payload[0] & 0xF0) == 0x80 || (payload[0] & 0xF0) == 0x40) {
@@ -140,46 +71,45 @@ void sniffer_frame_cb(void* buf, wifi_promiscuous_pkt_type_t type) {
             tag_offset += 2 + tag_len;
         }
     }
-    size_t encoded_len;
-    if(subtype == 8) {
-        encoded_len = 4;
-    } else {
-        encoded_len = encode_base64_length(len);
-    }
-    unsigned char payload_b64[encoded_len + 1] = "null";
-    if(subtype != 8) {
-        encode_base64(payload, len, payload_b64);
-    }
-    // Create JSON
-    char json[JSON_BUF_SIZE];
-    int json_len = snprintf(json, sizeof(json),
-        "{"
-        "\"ts_sec\":%lu,"
-        "\"ts_usec\":%lu,"
-        "\"rssi\":%d,"
-        "\"channel\":%d,"
-        "\"len\":%d,"
-        "\"mac\":\"%s\","
-        "\"ssid\":\"%s\","
-        "\"subtype\":\"%s\","
-        "\"payload\":\"%s\""
-        "}\n",
-        (unsigned long)ts_sec,
-        (unsigned long)ts_usec,
-        rssi,
-        channel,
-        len,
-        mac_str,
-        ssid,
-        subtype_str,
-        payload_b64
-    );
-    if (json_len > 0 && json_len < sizeof(json)) {
-        uart_write_bytes(UART_NUM_0, json, json_len);
+
+    // Base64 encode payload
+    size_t b64_len = encode_base64_length(len);
+    unsigned char payload_b64[b64_len];
+    size_t outlen;
+    encode_base64(payload, len, payload_b64);
+    // Build JSON
+    JsonDocument doc;
+    doc["ts_sec"] = ts_sec;
+    doc["ts_usec"] = ts_usec;
+    doc["rssi"] = rssi;
+    doc["channel"] = channel;
+    doc["len"] = len;
+    doc["ssid"] = ssid;
+    doc["ra"] = mac1;
+    doc["ta"] = mac2;
+    doc["dst"] = mac3;
+    doc["type"] = mgmt_frame_subtype_to_str(subtype);
+    doc["payload_b64"] = payload_b64;
+    // Serialize JSON
+    char output[1024];
+    size_t written = serializeJson(doc, output, sizeof(output));
+    output[written++] = '\n';  // newline for streaming readers
+    // Send over UART
+    uart_write_bytes(UART_NUM_0, output, written);
+}
+
+void hop_task(void *pvparams) {
+    int current_channel_index = 0;
+    int channels[] = HOP_CHANNELS;
+    while (1) {
+        int channel = channels[current_channel_index];
+        esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
+        current_channel_index = (current_channel_index + 1) % NUM_CHANNELS;
+        vTaskDelay(HOP_DELAY / portTICK_PERIOD_MS);
     }
 }
 
-void setup() {
+void setup(void) {
   ESP_ERROR_CHECK(uart_driver_install(UART_NUM_0, uart_buffer_size, uart_buffer_size, 10, &uart_queue, 0));
   const uart_port_t uart_num = UART_NUM_0;
   uart_config_t uart_config = {
@@ -189,9 +119,7 @@ void setup() {
       .stop_bits = UART_STOP_BITS_1,
       .flow_ctrl = UART_HW_FLOWCTRL_DISABLE,
   };
-  #ifndef HELTEC_V3
-    ESP_ERROR_CHECK(uart_set_pin(UART_NUM_0, 39, 37, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
-  #endif
+  ESP_ERROR_CHECK(uart_set_pin(UART_NUM_0, UART_TX, UART_RX, UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
   wifi_init_config_t default_wifi_client_config = WIFI_INIT_CONFIG_DEFAULT();
   ESP_ERROR_CHECK(esp_wifi_init(&default_wifi_client_config));
   ESP_ERROR_CHECK(esp_wifi_set_country(&wifi_country_config));
@@ -200,23 +128,13 @@ void setup() {
   ESP_ERROR_CHECK(esp_wifi_set_promiscuous_filter(&wifi_sniffer_filter_config));
   ESP_ERROR_CHECK(esp_wifi_set_promiscuous_rx_cb(sniffer_frame_cb));
   ESP_ERROR_CHECK(uart_param_config(uart_num, &uart_config));
-  ESP_ERROR_CHECK(nvs_flash_init());
   ESP_ERROR_CHECK(esp_netif_init());
   ESP_ERROR_CHECK(esp_event_loop_create_default());
+  xTaskCreate(hop_task, "hop_task", 1024, NULL, 0, &hop_task_handle);
 }
 
-#define NUM_CHANNELS 3
-int channels[] = {1, 6, 11};
-#define HOP_DELAY 250
-
-static int current_channel_index = 0;
-static int last_channel = -1;
-
-void loop(void) {
-    while (1) {
-        int channel = channels[current_channel_index];
-        esp_wifi_set_channel(channel, WIFI_SECOND_CHAN_NONE);
-        current_channel_index = (current_channel_index + 1) % NUM_CHANNELS;
-        vTaskDelay(HOP_DELAY / portTICK_PERIOD_MS);
+void loop() {
+    for(;;) {
+        vTaskDelay(100);
     }
 }
