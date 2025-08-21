@@ -2,28 +2,22 @@
 #include "config.h"
 #include "esp_wifi.h"
 #include "base64.hpp"
-#include "packet_utils.h"
-
 QueueHandle_t packet_queue;
 TaskHandle_t hop_task_handle;
 TaskHandle_t uart_task_handle;
-
 wifi_promiscuous_filter_t wifi_sniffer_filter_config = {
     .filter_mask = WIFI_PROMIS_FILTER_MASK_MGMT,
 };
-
 const wifi_country_t wifi_country_config = {
     .cc = COUNTRY,
     .schan = LOWER_CHANNEL_BOUND,
     .nchan = UPPER_CHANNEL_BOUND,
     .policy = WIFI_COUNTRY_POLICY_AUTO
 };
-
 void sniffer_frame_cb(void* buf, wifi_promiscuous_pkt_type_t type) {
     wifi_promiscuous_pkt_t* pkt = (wifi_promiscuous_pkt_t*) buf;
     xQueueSendFromISR(packet_queue, pkt, 0);
 }
-
 void hop_task(void *pvparams) {
     int current_channel_index = 0;
     int channels[] = HOP_CHANNELS;
@@ -34,7 +28,6 @@ void hop_task(void *pvparams) {
         vTaskDelay(HOP_DELAY / portTICK_PERIOD_MS);
     }
 }
-
 void uart_task(void* pv) {
     wifi_promiscuous_pkt_t pkt;
     while (1) {
@@ -53,7 +46,6 @@ void uart_task(void* pv) {
         vTaskDelay(10);
     }
 }
-
 void setup(void) {
     Serial.begin(921600);
     packet_queue = xQueueCreate(100, sizeof(wifi_promiscuous_pkt_t));
@@ -69,8 +61,6 @@ void setup(void) {
     xTaskCreate(hop_task, "hop_task", 1024, NULL, 0, &hop_task_handle);
     xTaskCreate(uart_task, "uart_task", 8192, nullptr, 1, &uart_task_handle);
 }
-
-
 void loop() {
     vTaskDelay(100);
 }

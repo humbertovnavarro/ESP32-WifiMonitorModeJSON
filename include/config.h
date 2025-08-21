@@ -1,16 +1,5 @@
-#ifndef HAS_UART_BRIDGE
-    #define UART_TX 39
-    #define UART_RX 37
-#else
-    #define UART_TX UART_PIN_NO_CHANGE
-    #define UART_RX UART_PIN_NO_CHANGE
-#endif
-#define JSON_BUF_SIZE 2048
-#define UART_BUF_SIZE 1024 * 8
-#define MAX_DEBOUNCE_ENTRIES 32
 #define HOP_DELAY 250
 #define NUM_CHANNELS 3
-#define BAUD 115200
 #define HOP_DELAY 250
 #define HOP_CHANNELS {1,6,11}
 #define COUNTRY "US"
