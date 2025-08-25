@@ -2,6 +2,35 @@
 #include "config.h"
 #include "esp_wifi.h"
 #include "base64.hpp"
+#include <unordered_map>
+
+struct FrameKey {
+    uint8_t subtype;
+    uint8_t src[6];
+    uint8_t dest[6];
+    bool operator==(const FrameKey& other) const {
+        return subtype == other.subtype &&
+               memcmp(src, other.src, 6) == 0 &&
+               memcmp(dest, other.dest, 6) == 0;
+    }
+};
+
+// Hash for FrameKey
+struct FrameKeyHash {
+    std::size_t operator()(const FrameKey& key) const {
+        // simple hash combine: subtype + first 4 bytes of src + first 4 bytes of dest
+        size_t h = key.subtype;
+        for (int i = 0; i < 6; i++) {
+            h = (h * 131) + key.src[i];
+            h = (h * 131) + key.dest[i];
+        }
+        return h;
+    }
+};
+
+static std::unordered_map<FrameKey, uint32_t, FrameKeyHash> debounce_map;
+static const uint32_t DEBOUNCE_WINDOW_MS = 1500;
+static const size_t MAX_ENTRIES = 1024;
 
 QueueHandle_t packet_queue;
 TaskHandle_t hop_task_handle;
@@ -80,15 +109,50 @@ void hop_task(void *pvparams)
     }
 }
 
-
+// prune entries older than debounce window
+static void prune_debounce_map(uint32_t now) {
+    for (auto it = debounce_map.begin(); it != debounce_map.end(); ) {
+        if (now - it->second >= DEBOUNCE_WINDOW_MS) {
+            it = debounce_map.erase(it);
+        } else {
+            ++it;
+        }
+        vTaskDelay(1);
+    }
+}
 
 void uart_task(void *pv)
 {
     wifi_promiscuous_pkt_t pkt;
+    uint32_t last_prune = 0;
     while (1)
     {
         if (xQueueReceive(packet_queue, &pkt, portMAX_DELAY))
         {
+            uint8_t* payload = pkt.payload;
+            uint8_t frame_control = payload[0];
+            uint8_t subtype = (frame_control & 0xF0) >> 4;
+            // Extract addresses
+            uint8_t* dest = payload + 4;   // Addr1
+            uint8_t* src  = payload + 10;  // Addr2
+            FrameKey key;
+            key.subtype = subtype;
+            memcpy(key.dest, dest, 6);
+            memcpy(key.src, src, 6);
+            uint32_t now = xTaskGetTickCount() * portTICK_PERIOD_MS;
+            // prune every 10s
+            if (now - last_prune > 10000) {
+                prune_debounce_map(now);
+                last_prune = now;
+            }
+            auto it = debounce_map.find(key);
+            if (it != debounce_map.end()) {
+                if (now - it->second < DEBOUNCE_WINDOW_MS) {
+                    continue;
+                }
+            }
+            debounce_map[key] = now;
+            // Packet info
             int len = pkt.rx_ctrl.sig_len;
             int channel = pkt.rx_ctrl.channel;
             int rssi = pkt.rx_ctrl.rssi;
